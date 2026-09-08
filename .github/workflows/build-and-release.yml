@@ -1,0 +1,141 @@
+name: Build and Release APKs
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: "Release tag name"
+        required: false
+        default: "v1.2.1-controller-toggle"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL /usr/local/share/boost /usr/share/swift
+          df -h /
+
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up swap
+        run: |
+          sudo fallocate -l 8G /mnt/swapfile.ci
+          sudo chmod 600 /mnt/swapfile.ci
+          sudo mkswap /mnt/swapfile.ci
+          sudo swapon /mnt/swapfile.ci
+          free -m
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: "17"
+          distribution: "temurin"
+          cache: gradle
+
+      - name: Validate Gradle wrapper
+        uses: gradle/actions/wrapper-validation@v4
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Configure Keystore
+        run: |
+          mkdir -p app/keystores
+          keytool -genkeypair -v -keystore app/keystores/keystore -alias gamenative -keyalg RSA -keysize 2048 -validity 10000 -storepass gamenative -keypass gamenative -dname "CN=GameNative, OU=Fork, O=GameNative, L=Unknown, ST=Unknown, C=US"
+          echo "storeFile=keystores/keystore" >> app/keystores/keystore.properties
+          echo "keyAlias=gamenative" >> app/keystores/keystore.properties
+          echo "storePassword=gamenative" >> app/keystores/keystore.properties
+          echo "keyPassword=gamenative" >> app/keystores/keystore.properties
+
+      - name: Inject credentials
+        run: |
+          cat <<EOF > local.properties
+          POSTHOG_API_KEY=dummy
+          POSTHOG_HOST=https://us.i.posthog.com
+          STEAMGRIDDB_API_KEY=
+          CLOUD_PROJECT_NUMBER=
+          EOF
+
+      - name: Install Android SDK Build Tools
+        run: |
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$SDKMANAGER" ]; then
+            SDKMANAGER="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+          fi
+          yes | "$SDKMANAGER" --install "build-tools;34.0.0"
+
+      - name: Build Bundles with Gradle
+        run: |
+          ./gradlew -Pkotlin.daemon.jvmargs=-Xmx3g :app:bundleLegacyRelease :app:bundleLegacyXrRelease
+
+      - name: Extract Universal APKs
+        run: |
+          mkdir -p dist
+          java -jar tools/bundletool-all-1.17.2.jar build-apks \
+            --bundle=app/build/outputs/bundle/legacyRelease/app-legacy-release.aab \
+            --output=app-legacy.apks \
+            --mode=universal
+          unzip -p app-legacy.apks universal.apk > dist/GameNative-v1.2.1-controller-toggle.apk
+
+          java -jar tools/bundletool-all-1.17.2.jar build-apks \
+            --bundle=app/build/outputs/bundle/legacyXrRelease/app-legacyXr-release.aab \
+            --output=app-legacy-xr.apks \
+            --mode=universal
+          unzip -p app-legacy-xr.apks universal.apk > dist/GameNative-v1.2.1-controller-toggle-legacy-xr.apk
+
+      - name: Sign APKs
+        run: |
+          BUILD_TOOLS_DIR="${ANDROID_HOME}/build-tools/34.0.0"
+          if [ ! -d "$BUILD_TOOLS_DIR" ]; then
+            BUILD_TOOLS_DIR="${ANDROID_SDK_ROOT}/build-tools/34.0.0"
+          fi
+          for apk in dist/*.apk; do
+            "${BUILD_TOOLS_DIR}/apksigner" sign \
+              --ks app/keystores/keystore \
+              --ks-key-alias "gamenative" \
+              --ks-pass "pass:gamenative" \
+              --key-pass "pass:gamenative" \
+              "$apk"
+          done
+
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: gamenative-apks
+          path: dist/*.apk
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag_name || github.ref_name }}
+          name: GameNative ${{ inputs.tag_name || github.ref_name }}
+          draft: false
+          prerelease: false
+          body: |
+            ## GameNative with In-Game Controller API & Steam Input Toggle
+
+            This release includes:
+            - **In-Game Controller API Settings**: Toggle controller APIs directly while playing from the in-game QuickMenu (Controller tab).
+            - **Peace Walker Controller Fix**: Dynamic runtime Steam Input toggle generates Goldberg controller bindings on the fly to fix controller detection in Peace Walker and similar titles.
+            - **Live WinHandler Switching**: Dynamically switch between XInput, DirectInput, Both, and SDL Controller API during gameplay.
+
+            ### Downloads:
+            - **`GameNative-v1.2.1-controller-toggle.apk`**: Standard release for Android phones, tablets, and handhelds.
+            - **`GameNative-v1.2.1-controller-toggle-legacy-xr.apk`**: Release for Meta Quest and XR headsets.
+          files: |
+            dist/GameNative-v1.2.1-controller-toggle.apk
+            dist/GameNative-v1.2.1-controller-toggle-legacy-xr.apk
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
