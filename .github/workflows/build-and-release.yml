@@ -31,7 +31,7 @@ jobs:
 
       - name: Set up swap
         run: |
-          sudo fallocate -l 8G /mnt/swapfile.ci
+          sudo fallocate -l 16G /mnt/swapfile.ci
           sudo chmod 600 /mnt/swapfile.ci
           sudo mkswap /mnt/swapfile.ci
           sudo swapon /mnt/swapfile.ci
@@ -76,9 +76,20 @@ jobs:
           fi
           yes | "$SDKMANAGER" --install "build-tools;34.0.0"
 
+      - name: Compute release tag
+        id: tag
+        run: |
+          if [ -n "${{ inputs.tag_name }}" ]; then
+            echo "tag=${{ inputs.tag_name }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Build Bundles with Gradle
         run: |
-          ./gradlew -Pkotlin.daemon.jvmargs=-Xmx3g :app:bundleLegacyRelease :app:bundleLegacyXrRelease
+          ./gradlew --no-parallel -Pkotlin.daemon.jvmargs=-Xmx5g :app:bundleLegacyRelease
+          ./gradlew --no-parallel -Pkotlin.daemon.jvmargs=-Xmx5g :app:bundleLegacyXrRelease
+          free -m
 
       - name: Extract Universal APKs
         run: |
@@ -87,13 +98,13 @@ jobs:
             --bundle=app/build/outputs/bundle/legacyRelease/app-legacy-release.aab \
             --output=app-legacy.apks \
             --mode=universal
-          unzip -p app-legacy.apks universal.apk > dist/GameNative-v1.2.1-controller-toggle.apk
+          unzip -p app-legacy.apks universal.apk > "dist/GameNative-${{ steps.tag.outputs.tag }}.apk"
 
           java -jar tools/bundletool-all-1.17.2.jar build-apks \
             --bundle=app/build/outputs/bundle/legacyXrRelease/app-legacyXr-release.aab \
             --output=app-legacy-xr.apks \
             --mode=universal
-          unzip -p app-legacy-xr.apks universal.apk > dist/GameNative-v1.2.1-controller-toggle-legacy-xr.apk
+          unzip -p app-legacy-xr.apks universal.apk > "dist/GameNative-${{ steps.tag.outputs.tag }}-legacy-xr.apk"
 
       - name: Sign APKs
         run: |
@@ -117,10 +128,11 @@ jobs:
           path: dist/*.apk
 
       - name: Create GitHub Release
+        id: release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ inputs.tag_name || github.ref_name }}
-          name: GameNative ${{ inputs.tag_name || github.ref_name }}
+          tag_name: ${{ steps.tag.outputs.tag }}
+          name: GameNative ${{ steps.tag.outputs.tag }}
           draft: false
           prerelease: false
           body: |
@@ -132,10 +144,10 @@ jobs:
             - **Live WinHandler Switching**: Dynamically switch between XInput, DirectInput, Both, and SDL Controller API during gameplay.
 
             ### Downloads:
-            - **`GameNative-v1.2.1-controller-toggle.apk`**: Standard release for Android phones, tablets, and handhelds.
-            - **`GameNative-v1.2.1-controller-toggle-legacy-xr.apk`**: Release for Meta Quest and XR headsets.
+            - **`GameNative-${{ steps.tag.outputs.tag }}.apk`**: Standard release for Android phones, tablets, and handhelds.
+            - **`GameNative-${{ steps.tag.outputs.tag }}-legacy-xr.apk`**: Release for Meta Quest and XR headsets.
           files: |
-            dist/GameNative-v1.2.1-controller-toggle.apk
-            dist/GameNative-v1.2.1-controller-toggle-legacy-xr.apk
+            dist/GameNative-${{ steps.tag.outputs.tag }}.apk
+            dist/GameNative-${{ steps.tag.outputs.tag }}-legacy-xr.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
