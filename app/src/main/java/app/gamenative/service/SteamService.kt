@@ -1777,7 +1777,7 @@ class SteamService : Service(), IChallengeUrlChanged {
         }
 
         internal fun readBuiltInSteamInputTemplate(fileName: String): String? {
-            val assets = instance?.assets ?: PluviaApp.instance?.assets ?: return null
+            val assets = instance?.assets ?: return null
             return runCatching {
                 assets.open("steaminput/$fileName").use { stream ->
                     stream.readBytes().toString(Charsets.UTF_8)
