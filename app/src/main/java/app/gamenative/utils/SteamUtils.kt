@@ -1694,5 +1694,111 @@ object SteamUtils {
             Timber.e(e, "Failed to generate achievements for $appId")
         }
     }
+
+    fun readBuiltInSteamInputTemplate(context: Context, fileName: String = "controller_xboxone_gamepad_fps.vdf"): String? {
+        return SteamService.readBuiltInSteamInputTemplate(fileName)
+            ?: runCatching {
+                context.assets.open("steaminput/$fileName").use { stream ->
+                    stream.readBytes().toString(Charsets.UTF_8)
+                }
+            }.getOrNull()
+    }
+
+    fun applySteamInputLive(context: Context, container: Container, enabled: Boolean): Boolean {
+        container.putExtra("useSteamInput", enabled)
+        container.saveData()
+
+        val steamAppId = runCatching { ContainerUtils.extractGameIdFromContainerId(container.id) }.getOrNull()
+            ?: runCatching { ContainerUtils.extractGameIdFromContainerId(container.name) }.getOrNull()
+            ?: 0
+
+        val dirs = LinkedHashSet<File>()
+
+        // 1. ColdClient / Steam root steam_settings
+        val steamRootDir = File(container.rootDir, ".wine/drive_c/Program Files (x86)/Steam")
+        val steamSettingsRoot = File(steamRootDir, "steam_settings")
+        if (steamSettingsRoot.exists() || (enabled && steamRootDir.exists())) {
+            dirs.add(steamSettingsRoot)
+        }
+
+        // 2. App dir steam_settings
+        if (steamAppId > 0) {
+            val appDirPath = SteamService.getAppDirPath(steamAppId)
+            if (appDirPath.isNotEmpty()) {
+                val appDir = File(appDirPath)
+                if (appDir.exists()) {
+                    dirs.add(File(appDir, "steam_settings"))
+                    runCatching {
+                        appDir.walkTopDown().maxDepth(6).forEach { file ->
+                            if (file.isDirectory && file.name == "steam_settings") {
+                                dirs.add(file)
+                            } else if (file.isFile && (file.name.equals("steam_api.dll", ignoreCase = true) || file.name.equals("steam_api64.dll", ignoreCase = true))) {
+                                val parent = file.parentFile
+                                if (parent != null) {
+                                    dirs.add(File(parent, "steam_settings"))
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 3. Scan container's .wine/drive_c for existing steam_settings
+        val wineDriveC = File(container.rootDir, ".wine/drive_c")
+        if (wineDriveC.exists()) {
+            runCatching {
+                wineDriveC.walkTopDown().maxDepth(6).forEach { file ->
+                    if (file.isDirectory && file.name == "steam_settings") {
+                        dirs.add(file)
+                    }
+                }
+            }
+        }
+
+        var success = false
+        if (enabled) {
+            val vdfText = if (steamAppId > 0) {
+                SteamService.resolveSteamControllerVdfText(steamAppId)
+            } else null
+            val effectiveVdfText = vdfText
+                ?: readBuiltInSteamInputTemplate(context, "controller_xboxone_gamepad_fps.vdf")
+                ?: readBuiltInSteamInputTemplate(context, "gamepad_joystick.vdf")
+                ?: readBuiltInSteamInputTemplate(context, "gamepad+mouse.vdf")
+
+            if (!effectiveVdfText.isNullOrEmpty()) {
+                for (dir in dirs) {
+                    try {
+                        val controllerDir = File(dir, "controller")
+                        if (!controllerDir.exists()) {
+                            controllerDir.mkdirs()
+                        }
+                        SteamControllerVdfUtils.generateControllerConfig(effectiveVdfText, controllerDir.toPath())
+                        success = true
+                        Timber.i("applySteamInputLive: generated Steam Input config in ${controllerDir.absolutePath}")
+                    } catch (e: Exception) {
+                        Timber.w(e, "applySteamInputLive: failed to generate Steam Input config in ${dir.absolutePath}")
+                    }
+                }
+            } else {
+                Timber.w("applySteamInputLive: no VDF controller template found for appId=$steamAppId")
+            }
+        } else {
+            for (dir in dirs) {
+                try {
+                    val controllerDir = File(dir, "controller")
+                    if (controllerDir.exists()) {
+                        controllerDir.deleteRecursively()
+                        success = true
+                        Timber.i("applySteamInputLive: removed Steam Input config in ${controllerDir.absolutePath}")
+                    }
+                } catch (e: Exception) {
+                    Timber.w(e, "applySteamInputLive: failed to delete Steam Input config in ${dir.absolutePath}")
+                }
+            }
+        }
+
+        return success
+    }
 }
 

@@ -3,6 +3,7 @@ package app.gamenative.utils
 import android.content.Context
 import android.os.Build
 import app.gamenative.BuildConfig
+import app.gamenative.PluviaApp
 import app.gamenative.PrefManager
 import app.gamenative.data.GameSource
 import app.gamenative.enums.Marker
@@ -1415,5 +1416,26 @@ object ContainerUtils {
         )
         val tokens = baseName.split(Regex("[^a-z0-9]+")).filter { it.isNotBlank() }
         return tokens.any { it in denylistTokens }
+    }
+
+    fun updatePreferredInputApiLive(container: Container, enableXInput: Boolean, enableDInput: Boolean) {
+        val api = when {
+            enableXInput && enableDInput -> PreferredInputApi.BOTH
+            enableXInput -> PreferredInputApi.XINPUT
+            enableDInput -> PreferredInputApi.DINPUT
+            else -> PreferredInputApi.AUTO
+        }
+        container.inputType = api.ordinal
+        container.saveData()
+        val winHandler = PluviaApp.xServerView?.getxServer()?.winHandler
+        winHandler?.setPreferredInputApi(api)
+        winHandler?.refreshControllerMappingsForHotplug()
+    }
+
+    fun updateSdlControllerApiLive(container: Container, enabled: Boolean) {
+        container.isSdlControllerAPI = enabled
+        container.saveData()
+        val winHandler = PluviaApp.xServerView?.getxServer()?.winHandler
+        winHandler?.refreshControllerMappingsForHotplug()
     }
 }

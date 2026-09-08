@@ -1776,8 +1776,8 @@ class SteamService : Service(), IChallengeUrlChanged {
             return null
         }
 
-        private fun readBuiltInSteamInputTemplate(fileName: String): String? {
-            val assets = instance?.assets ?: return null
+        internal fun readBuiltInSteamInputTemplate(fileName: String): String? {
+            val assets = instance?.assets ?: PluviaApp.instance?.assets ?: return null
             return runCatching {
                 assets.open("steaminput/$fileName").use { stream ->
                     stream.readBytes().toString(Charsets.UTF_8)
@@ -1792,19 +1792,25 @@ class SteamService : Service(), IChallengeUrlChanged {
         }
 
         fun resolveSteamControllerVdfText(appId: Int): String? {
-            val config = getAppInfoOf(appId)?.config ?: return null
-            return when (config.steamControllerTemplateIndex) {
-                1 -> readDownloadedSteamInputTemplate(appId)
-                13 -> {
-                    val manifestFile = resolveSteamInputManifestFile(appId, getAppDirPath(appId))
-                        ?: return null
-                    loadConfigFromManifest(manifestFile)
+            val config = getAppInfoOf(appId)?.config
+            if (config != null) {
+                val resolved = when (config.steamControllerTemplateIndex) {
+                    1 -> readDownloadedSteamInputTemplate(appId)
+                    13 -> {
+                        val manifestFile = resolveSteamInputManifestFile(appId, getAppDirPath(appId))
+                            ?: return null
+                        loadConfigFromManifest(manifestFile)
+                    }
+                    2, 12 -> readBuiltInSteamInputTemplate("controller_xboxone_gamepad_fps.vdf")
+                    6 -> readBuiltInSteamInputTemplate("controller_xboxone_wasd.vdf")
+                    4, 5 -> readBuiltInSteamInputTemplate("gamepad_joystick.vdf")
+                    else -> readBuiltInSteamInputTemplate("gamepad+mouse.vdf")
                 }
-                2, 12 -> readBuiltInSteamInputTemplate("controller_xboxone_gamepad_fps.vdf")
-                6 -> readBuiltInSteamInputTemplate("controller_xboxone_wasd.vdf")
-                4, 5 -> readBuiltInSteamInputTemplate("gamepad_joystick.vdf")
-                else -> readBuiltInSteamInputTemplate("gamepad+mouse.vdf")
+                if (resolved != null) return resolved
             }
+            return readBuiltInSteamInputTemplate("controller_xboxone_gamepad_fps.vdf")
+                ?: readBuiltInSteamInputTemplate("gamepad_joystick.vdf")
+                ?: readBuiltInSteamInputTemplate("gamepad+mouse.vdf")
         }
 
         fun downloadApp(

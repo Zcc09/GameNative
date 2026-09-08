@@ -83,6 +83,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.ui.input.pointer.pointerInput
@@ -106,12 +107,16 @@ import app.gamenative.ui.component.quickMenus.PowerControlQuickMenuTab
 import app.gamenative.ui.data.PerformanceHudConfig
 import app.gamenative.ui.data.PerformanceHudSize
 import app.gamenative.ui.theme.PluviaTheme
+import app.gamenative.ui.util.SnackbarManager
 import app.gamenative.ui.util.adaptivePanelWidth
+import app.gamenative.utils.ContainerUtils
 import app.gamenative.utils.MathUtils.normalizedProgress
+import app.gamenative.utils.SteamUtils
 import com.winlator.container.Container
 import com.winlator.renderer.GLRenderer
 import com.winlator.renderer.VulkanRenderer
 import com.winlator.winhandler.ProcessInfo
+import com.winlator.winhandler.WinHandler.PreferredInputApi
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
@@ -435,6 +440,28 @@ fun QuickMenu(
     // Kept here rather than plumbed through XServerScreen: that composable sits at the
     // dex verifier's register limit and extra locals can produce invalid bytecode.
     val gyroMenu = remember(container?.id) { container?.let(::GyroQuickMenuState) }
+
+    val context = LocalContext.current
+    var liveUseSteamInput by remember(container?.id) {
+        mutableStateOf(container?.getExtra("useSteamInput", "false")?.toBoolean() ?: false)
+    }
+    var liveEnableXInput by remember(container?.id) {
+        val inputType = container?.inputType ?: PreferredInputApi.BOTH.ordinal
+        mutableStateOf(
+            inputType == PreferredInputApi.XINPUT.ordinal ||
+            inputType == PreferredInputApi.BOTH.ordinal
+        )
+    }
+    var liveEnableDInput by remember(container?.id) {
+        val inputType = container?.inputType ?: PreferredInputApi.BOTH.ordinal
+        mutableStateOf(
+            inputType == PreferredInputApi.DINPUT.ordinal ||
+            inputType == PreferredInputApi.BOTH.ordinal
+        )
+    }
+    var liveSdlApi by remember(container?.id) {
+        mutableStateOf(container?.isSdlControllerAPI ?: false)
+    }
 
     val controllerItems = buildList {
         add(
@@ -1103,6 +1130,64 @@ fun QuickMenu(
                                                     else if (item.id == QuickMenuAction.GYRO && gyroEnabled)
                                                         ({ showGyroSettingsDialog = true })
                                                     else null,
+                                                )
+                                            }
+
+                                            if (container != null) {
+                                                Spacer(modifier = Modifier.height(12.dp))
+                                                QuickMenuSectionHeader(
+                                                    title = stringResource(R.string.controller_api_settings),
+                                                )
+
+                                                QuickMenuToggleRow(
+                                                    title = stringResource(R.string.use_steam_input),
+                                                    subtitle = stringResource(R.string.use_steam_input_subtitle),
+                                                    enabled = liveUseSteamInput,
+                                                    onToggle = {
+                                                        val newEnabled = !liveUseSteamInput
+                                                        liveUseSteamInput = newEnabled
+                                                        SteamUtils.applySteamInputLive(context, container, newEnabled)
+                                                        PluviaApp.xServerView?.getxServer()?.winHandler?.refreshControllerMappingsForHotplug()
+                                                        SnackbarManager.show(
+                                                            context.getString(
+                                                                if (newEnabled) R.string.steam_input_enabled else R.string.steam_input_disabled
+                                                            )
+                                                        )
+                                                    },
+                                                    accentColor = PluviaTheme.colors.accentPurple,
+                                                )
+
+                                                QuickMenuToggleRow(
+                                                    title = stringResource(R.string.enable_xinput_api),
+                                                    enabled = liveEnableXInput,
+                                                    onToggle = {
+                                                        val newX = !liveEnableXInput
+                                                        liveEnableXInput = newX
+                                                        ContainerUtils.updatePreferredInputApiLive(container, newX, liveEnableDInput)
+                                                    },
+                                                    accentColor = PluviaTheme.colors.accentPurple,
+                                                )
+
+                                                QuickMenuToggleRow(
+                                                    title = stringResource(R.string.enable_directinput_api),
+                                                    enabled = liveEnableDInput,
+                                                    onToggle = {
+                                                        val newD = !liveEnableDInput
+                                                        liveEnableDInput = newD
+                                                        ContainerUtils.updatePreferredInputApiLive(container, liveEnableXInput, newD)
+                                                    },
+                                                    accentColor = PluviaTheme.colors.accentPurple,
+                                                )
+
+                                                QuickMenuToggleRow(
+                                                    title = stringResource(R.string.use_sdl_api),
+                                                    enabled = liveSdlApi,
+                                                    onToggle = {
+                                                        val newSdl = !liveSdlApi
+                                                        liveSdlApi = newSdl
+                                                        ContainerUtils.updateSdlControllerApiLive(container, newSdl)
+                                                    },
+                                                    accentColor = PluviaTheme.colors.accentPurple,
                                                 )
                                             }
                                         }
